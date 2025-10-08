@@ -2,6 +2,7 @@ import sys
 import traceback
 from typing import Optional, cast
 
+
 class ResearchAnalystException(Exception):
     def __init__(self, error_message, error_details: Optional[object] = None):
         # Normalize message

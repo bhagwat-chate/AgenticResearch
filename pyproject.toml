@@ -6,5 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "langchain>=0.3.27",
+    "langchain-community>=0.3.31",
+    "langchain-core>=0.3.78",
+    "langchain-openai==0.3.32",
     "langgraph>=0.6.9",
+    "structlog>=25.4.0",
+    "tavily-python>=0.7.12",
+    "wikipedia>=1.4.0",
 ]
