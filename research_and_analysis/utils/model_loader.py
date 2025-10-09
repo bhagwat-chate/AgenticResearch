@@ -3,11 +3,13 @@ import sys
 import json
 import asyncio
 from dotenv import load_dotenv
-from utils.config_loader import load_config
+from research_and_analysis.utils.config_loader import load_config
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_google_genai import GoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from logger import GLOBAL_LOGGER as log
-from exception.custom_exception import ResearchAnalysisException
+from research_and_analysis.logger import GLOBAL_LOGGER as log
+from research_and_analysis.exception.custom_exception import ResearchAnalysisException
+
+load_dotenv()
 
 
 class ApiKeyManager:
@@ -15,7 +17,7 @@ class ApiKeyManager:
         self.api_keys = {
             "OPENAI_API_KEY": os.getenv('OPENAI_API_KEY'),
             "GROQ_API_KEY": os.getenv("GROQ_API_KEY"),
-            "GROQ_API_KEY": os.getenv("GROQ_API_KEY")
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY")
         }
 
         for key, val in self.api_keys.items():
@@ -26,7 +28,8 @@ class ApiKeyManager:
     
     def get(self, key: str):
         return self.api_keys.get(key)
-    
+
+
 class ModelLoader:
     def __init__(self):
         self.api_key_mgr = ApiKeyManager()

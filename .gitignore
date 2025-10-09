@@ -9,3 +9,5 @@ wheels/
 # Virtual environments
 .venv
 .idea
+__pycache__
+.env
