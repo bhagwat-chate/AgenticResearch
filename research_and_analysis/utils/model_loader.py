@@ -5,7 +5,8 @@ import asyncio
 from dotenv import load_dotenv
 from research_and_analysis.utils.config_loader import load_config
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_google_genai import GoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_groq import ChatGroq
 from research_and_analysis.logger import GLOBAL_LOGGER as log
 from research_and_analysis.exception.custom_exception import ResearchAnalysisException
 
@@ -22,7 +23,8 @@ class ApiKeyManager:
 
         for key, val in self.api_keys.items():
             if val:
-                log.info(f"{key} loaded from environment")
+                # log.info(f"{key} loaded from environment")
+                pass
             else:
                 log.warning(f"{key} not available in environment")
     
@@ -73,7 +75,7 @@ class ModelLoader:
         temperature = llm_config.get("temperature", 0.2)
         max_tokens = llm_config.get("max_output_tokens", 2048)
 
-        log.info("Loading LLM", provider=provider, model=model_name)
+        log.info("Loaded LLM", provider=provider, model=model_name)
 
         if provider == "google":
             return ChatGoogleGenerativeAI(
@@ -101,6 +103,7 @@ class ModelLoader:
             log.error("Unsupported LLM provider", provider=provider)
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
+
 if __name__=='__main__':
     loader = ModelLoader()
 
@@ -108,7 +111,7 @@ if __name__=='__main__':
     print(f"embedding model laoded: {embedding}")
 
     result = embedding.embed_query("Hello, how re you?")
-    print(f"embedding result: {result}")
+    print(f"embedding result: {len(result)}")
 
     llm = loader.load_llm()
     print(f"LLM loaded: {llm}")
