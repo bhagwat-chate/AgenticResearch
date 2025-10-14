@@ -11,3 +11,8 @@ wheels/
 .idea
 __pycache__
 .env
+.idea/research-flow.iml
+.idea/misc.xml
+.env
+logs
+notebook/logs/
