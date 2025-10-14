@@ -1,16 +1,17 @@
 # research_and_analysis\utils\model_loader.py
 
+import asyncio
 import os
 import sys
-import json
-import asyncio
+
 from dotenv import load_dotenv
-from research_and_analysis.utils.config_loader import load_config
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
-from research_and_analysis.logger import GLOBAL_LOGGER as log
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
 from research_and_analysis.exception.custom_exception import ResearchAnalysisException
+from research_and_analysis.logger import GLOBAL_LOGGER as log
+from research_and_analysis.utils.config_loader import load_config
 
 load_dotenv()
 
@@ -18,9 +19,9 @@ load_dotenv()
 class ApiKeyManager:
     def __init__(self):
         self.api_keys = {
-            "OPENAI_API_KEY": os.getenv('OPENAI_API_KEY'),
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
             "GROQ_API_KEY": os.getenv("GROQ_API_KEY"),
-            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY")
+            "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
         }
 
         for key, val in self.api_keys.items():
@@ -29,7 +30,7 @@ class ApiKeyManager:
                 pass
             else:
                 log.warning(f"{key} not available in environment")
-    
+
     def get(self, key: str):
         return self.api_keys.get(key)
 
@@ -39,27 +40,26 @@ class ModelLoader:
         self.api_key_mgr = ApiKeyManager()
         self.config = load_config()
 
-        log.info(f"YAML config load", config_keys=list(self.config.keys()))
+        log.info("YAML config load", config_keys=list(self.config.keys()))
 
     def load_embedding(self):
         try:
-            model_name = self.config['embedding_model']['model_name']
-            log.info(f"Loading embedding model", model=model_name)
+            model_name = self.config["embedding_model"]["model_name"]
+            log.info("Loading embedding model", model=model_name)
 
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
                 asyncio.set_event_loop(asyncio.new_event_loop())
-        
+
             return OpenAIEmbeddings(
-                model=model_name,
-                api_key=self.api_key_mgr.get('OPENAI_API_KEY')
+                model=model_name, api_key=self.api_key_mgr.get("OPENAI_API_KEY")
             )
-        
+
         except Exception as e:
             log.error(f"Error loading embedding model: error: {e}")
             raise ResearchAnalysisException("Failed to load embedding model", sys)
-        
+
     def load_llm(self):
         """
         Load and return the configured LLM model.
@@ -84,13 +84,13 @@ class ModelLoader:
                 model=model_name,
                 google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),
                 temperature=temperature,
-                max_output_tokens=max_tokens
+                max_output_tokens=max_tokens,
             )
 
         elif provider == "groq":
             return ChatGroq(
                 model=model_name,
-                api_key=self.api_key_mgr.get("GROQ_API_KEY"), #type: ignore
+                api_key=self.api_key_mgr.get("GROQ_API_KEY"),  # type: ignore
                 temperature=temperature,
             )
 
@@ -98,7 +98,7 @@ class ModelLoader:
             return ChatOpenAI(
                 model=model_name,
                 api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
-                temperature=temperature
+                temperature=temperature,
             )
 
         else:
@@ -106,7 +106,7 @@ class ModelLoader:
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
 
-if __name__=='__main__':
+if __name__ == "__main__":
     loader = ModelLoader()
 
     embedding = loader.load_embedding()

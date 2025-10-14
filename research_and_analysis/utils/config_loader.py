@@ -1,10 +1,13 @@
 import os
-import yaml
 from pathlib import Path
+
+import yaml
+
 
 def _product_root() -> Path:
     """Return the project root directory."""
     return Path(__file__).resolve().parents[1]
+
 
 def load_config(config_path: str | None = None) -> dict:
     """Load configuration YAML from a provided path or default location."""
