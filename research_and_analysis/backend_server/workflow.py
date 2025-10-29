@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.messages import get_buffer_string
 from langchain_community.tools.tavily_search import TavilySearchResults
 
+from research_and_analysis.prompt_lib.prompts import *
 from docx import Document
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -52,49 +53,252 @@ def build_interview_graph(llm, tavily_search=None):
     builder.add_edge('save_interview', 'write_section')
     builder.add_edge('write_section', END)
 
-    return builder.compile(checkpointer=memory).with_config(run_name='Conduct Interview')
+    return builder.compile(checkpointer=memory)
     # display(Image(interview_graph.get_graph().draw_mermaid_png()))
 
 
 class AutonomousReportGeneration:
-    def __init__(self):
-        pass
+    def __init__(self, llm):
+        self.llm = llm
+        self.memory = MemorySaver()
+        self.tavily_search = TavilySearchResults()
 
-    def create_analyst(self):
-        pass
+    def create_analyst(self, state: GenerateAnalystsState):
+        structured_llm = self.llm.with_structured_output(Perspectives)
+
+        # 🧩 Render Jinja template into a plain string
+        prompt_text = CREATE_ANALYSTS_PROMPT.render(
+            topic=state.get("topic", ""),
+            human_analyst_feedback=state.get("human_analyst_feedback", ""),
+            max_analysts=state.get("max_analysts", 3)
+        )
+
+        # ✅ Now pass the rendered string to SystemMessage
+        analysts = structured_llm.invoke([
+            SystemMessage(content=prompt_text),
+            HumanMessage(content="Generate the set of analysts.")
+        ])
+
+        return {"analysts": analysts.analysts}
 
     def human_feedback(self):
         pass
 
-    def write_report(self):
-        pass
+    def write_report(self, state: ResearchGraphState):
+        sections = state.get("sections", [])
+        topic = state.get("topic", "")
 
-    def write_introduction(self):
-        pass
+        if not sections:
+            sections = ['[No sections generated — kindly verify the interview stage.]']
 
-    def write_conclusion(self):
-        pass
+        # 🧩 Render your template
+        prompt_text = REPORT_WRITER_INSTRUCTIONS.render(
+            topic=topic
+        )
 
-    def finalize_report(self):
-        pass
+        # ✅ Send prompt properly
+        report = self.llm.invoke([
+            SystemMessage(content=prompt_text),
+            HumanMessage(content="\n\n".join(sections))
+        ])
 
-    def save_report(self):
-        pass
+        return {"content": report}
 
-    def _save_as_docx(self):
-        pass
+    def write_introduction(self, state: ResearchGraphState):
+        topic = state.get("topic", '')
+        intro = self.llm.invoke([
+            SystemMessage(content=f'Write a 100 word markdown introduction for {topic}')
+        ])
 
-    def _save_as_pdf(self):
-        pass
+        return {"introduction": intro}
+
+    def write_conclusion(self, state: ResearchGraphState):
+        topic = state.get("topic", "")
+        sections = state.get("sections", [])
+
+        # If no sections exist yet, add placeholder
+        if not sections:
+            sections = ["[No sections provided — conclusion will summarize general insights.]"]
+
+        # Render prompt template (Jinja2)
+        prompt_text = INTRO_CONCLUSION_INSTRUCTIONS.render(
+            topic=topic,
+            formatted_str_sections="\n".join(sections)
+        )
+
+        # Call LLM
+        conclusion = self.llm.invoke([
+            SystemMessage(content=prompt_text),
+            HumanMessage(content="Write the conclusion section.")
+        ])
+
+        return {"conclusion": conclusion}
+
+    def finalize_report(self, state: ResearchGraphState):
+        """
+        Combine introduction, main content, and conclusion into a single final report.
+        This is the last node of the graph.
+        """
+
+        intro = state.get("introduction", "")
+        content = state.get("content", "")
+        conclusion = state.get("conclusion", "")
+        topic = state.get("topic", "Untitled Research Report")
+
+        # Assemble markdown report
+        final_report = f"# {topic}\n\n"
+        if intro:
+            final_report += f"{intro}\n\n"
+        if content:
+            final_report += f"{content}\n\n"
+        if conclusion:
+            final_report += f"{conclusion}\n\n"
+
+        print("\n✅ Final report assembled successfully.\n")
+
+        # Return to graph
+        return {"final_report": final_report}
+
+    # def save_report(self, final_report: str, topic: str, format_: str = 'docx', save_dir: str = None):
+    #     pass
+    #
+    # def _save_as_docx(self, text: str, file_path: str):
+    #     pass
+    #
+    # def _save_as_pdf(self, text: str, file_path: str):
+    #     pass
+
+    def save_report(self, final_report: str, topic: str, format_: str = "docx", save_dir: Optional[str] = None):
+        """
+        Save the final report in DOCX or PDF format inside a timestamped folder.
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_topic = topic.replace(" ", "_").replace("/", "_")
+
+        # Default save directory
+        if not save_dir:
+            save_dir = os.path.join(os.getcwd(), "reports", safe_topic)
+        os.makedirs(save_dir, exist_ok=True)
+
+        file_path = os.path.join(save_dir, f"{safe_topic}_{timestamp}.{format_}")
+
+        if format_ == "docx":
+            self._save_as_docx(final_report, file_path)
+        elif format_ == "pdf":
+            self._save_as_pdf(final_report, file_path)
+        else:
+            raise ValueError(f"Unsupported format: {format_}")
+
+        print(f"📁 Saved {format_.upper()} report → {file_path}")
+
+    # ----------------------------------------------------------------------
+    def _save_as_docx(self, text: str, file_path: str):
+        """
+        Save report text (Markdown or plain) as a DOCX file using python-docx.
+        """
+        doc = Document()
+        doc.add_paragraph(text)
+        doc.save(file_path)
+
+    # ----------------------------------------------------------------------
+    def _save_as_pdf(self, text: str, file_path: str):
+        """
+        Save report text as a simple paginated PDF using ReportLab.
+        """
+        c = canvas.Canvas(file_path, pagesize=letter)
+        width, height = letter
+        margin, y = 72, height - 72  # 1-inch margins
+        line_height = 14
+
+        for line in text.split("\n"):
+            # Auto page-break
+            if y <= margin:
+                c.showPage()
+                y = height - margin
+            c.drawString(margin, y, line[:110])  # clip long lines
+            y -= line_height
+
+        c.save()
 
     def build_graph(self):
-        pass
+
+        builder = StateGraph(ResearchGraphState)
+
+        interview_graph = build_interview_graph(self.llm, self.tavily_search)
+
+        def initiate_all_interview(state: ResearchGraphState):
+            topic = state.get('topic', [])
+            analysts = state.get('analysts', [])
+
+            if not analysts:
+                print("No analysts found - skipping interviews.")
+                return END
+
+            return [
+                Send(
+                    "conduct_interview",
+                    {
+                        "analyst": analyst,
+                        "messages": [HumanMessage(content=f"So, let's discuss about {topic}.")],
+                        "max_num_turns": 2,
+                        "context": [],
+                        "interview": "",
+                        "sections": [],
+                    }
+                )
+                for analyst in analysts
+            ]
+        # Add nodes and edges
+        builder = StateGraph(ResearchGraphState)
+        builder.add_node("create_analysts", self.create_analyst)
+        builder.add_node("human_feedback", self.human_feedback)
+        builder.add_node("conduct_interview", interview_graph)
+        builder.add_node("write_report", self.write_report)
+        builder.add_node("write_introduction", self.write_introduction)
+        builder.add_node("write_conclusion", self.write_conclusion)
+        builder.add_node("finalize_report", self.finalize_report)
+
+        # Logic
+        builder.add_edge(START, "create_analysts")
+        builder.add_edge("create_analysts", "human_feedback")
+        builder.add_conditional_edges("human_feedback", initiate_all_interview,["conduct_interview"])
+        builder.add_edge("conduct_interview", "write_report")
+        builder.add_edge("conduct_interview", "write_introduction")
+        builder.add_edge("conduct_interview", "write_conclusion")
+        builder.add_edge(["write_conclusion", "write_report", "write_introduction"], "finalize_report")
+        builder.add_edge("finalize_report", END)
+
+        return builder.compile(interrupt_before=["human_feedback"], checkpointer=self.memory)
 
 
 if __name__ == '__main__':
-    ml = ModelLoader()
-    llm = ml.load_llm()
-    print(llm.invoke('Hi').content)
+    llm = ModelLoader().load_llm()
 
-    reporter = AutonomousReportGeneration()
-    reporter.build_graph()
+    reporter = AutonomousReportGeneration(llm)
+    graph = reporter.build_graph()
+
+    topic = "Generative AI for Drug discovery."
+
+    thread = {"configurable": {"thread_id": "1"}}
+
+    for _ in graph.stream({"topic": topic, "amx_analysts": 3}, thread, stream_mode="values"):
+        pass
+
+    state = graph.get_state(thread)
+
+    feedback = input("\n Enter your feedback or press 'Enter' to continue as is: ").strip()
+
+    graph.update_state(thread, {'human_feedback': feedback}, as_node="human_feedback")
+
+    for _ in graph.stream(None, thread, stream_mode='values'):
+        pass
+
+    final_state = graph.get_state(thread)
+    final_report = final_state.values.get("final_report")
+
+    if final_report:
+        reporter.save_report(final_report, topic, "docx")
+        reporter.save_report(final_report, topic, "pdf")
+
+    else:
+        print("no report content generated.")

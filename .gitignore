@@ -18,3 +18,4 @@ logs
 notebook/logs/
 ".env" 
 .pre-commit-config.yaml
+research_and_analysis/backend_server/reports

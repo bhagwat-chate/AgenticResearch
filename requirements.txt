@@ -109,4 +109,5 @@ yarl==1.22.0
 zstandard==0.25.0
 python-docx
 reportlab
+jinja2
 -e .
