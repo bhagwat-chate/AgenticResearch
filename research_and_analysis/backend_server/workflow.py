@@ -1,5 +1,4 @@
 import os
-import sys
 from datetime import datetime
 from typing import Optional
 from langgraph.types import Send
@@ -13,8 +12,11 @@ from research_and_analysis.prompt_lib.prompts import *
 from docx import Document
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from research_and_analysis.backend_server.models import Analyst, Perspectives, GenerateAnalystsState, InterviewState, ResearchGraphState, SearchQuery
+from research_and_analysis.backend_server.models import Perspectives, GenerateAnalystsState, InterviewState, ResearchGraphState, SearchQuery
 from research_and_analysis.utils.model_loader import ModelLoader
+
+import warnings
+warnings.filterwarnings('ignore')
 
 
 def build_interview_graph(llm, tavily_search=None):
@@ -22,24 +24,33 @@ def build_interview_graph(llm, tavily_search=None):
     memory = MemorySaver()
 
     def generate_question(state: InterviewState):
-        """Node to generate the questions"""
+        analyst = state.get("analyst")
+        if not analyst:
+            raise ValueError("Missing analyst in InterviewState")
 
-        # get state
-        analyst = state["analyst"]
-        messages = state["messages"]
+        # Render your Jinja2 prompt
+        prompt_text = ANALYST_ASK_QUESTIONS.render(goals=analyst.persona)
 
-        # generate the question
-        system_message = ANALYST_ASK_QUESTIONS.format(goals=analyst.persona)
-        question = llm.invoke([SystemMessage(content=system_message)] + messages)
+        # Build the base message list
+        messages = [
+            SystemMessage(content=prompt_text),
+            HumanMessage(content="Begin by asking your first interview question.")
+        ]
 
-        return {"messages": [question]}
+        # Invoke LLM directly with the messages
+        # question_response = state["llm"].invoke(messages)
+        question_response = llm.invoke(messages)
+
+        # Append the generated question into the dialogue
+        return {"messages": state["messages"] + [AIMessage(content=question_response.content)]}
 
     def search_web(state: InterviewState):
         """
         Retrieve data from the web
         """
         structured_llm = llm.with_structured_output(SearchQuery)
-        search_query = structured_llm.invoke([GENERATE_SEARCH_QUERY] + state["messages"])
+        prompt_text = GENERATE_SEARCH_QUERY.render()
+        search_query = structured_llm.invoke([SystemMessage(content=prompt_text)] + state["messages"])
 
         # Perform search
         raw_results = tavily_search.invoke(search_query.search_query)
@@ -72,7 +83,8 @@ def build_interview_graph(llm, tavily_search=None):
         context = state["context"]
 
         # Answer question
-        system_message = GENERATE_ANSWERS.format(goals=analyst.persona, context=context)
+        system_message = GENERATE_ANSWERS.render(goals=analyst.persona, context=context)
+
         answer = llm.invoke([SystemMessage(content=system_message)] + messages)
 
         # Name the message as coming from the expert
@@ -103,7 +115,7 @@ def build_interview_graph(llm, tavily_search=None):
         analyst = state["analyst"]
 
         # Write section using either the gathered source docs from interview (context) or the interview itself (interview)
-        system_message = WRITE_SECTION.format(focus=analyst.description)
+        system_message = WRITE_SECTION.render(focus=analyst.description)
         section = llm.invoke([SystemMessage(content=system_message)] + [
             HumanMessage(content=f"Use this source to write your section: {context}")])
 
@@ -114,21 +126,18 @@ def build_interview_graph(llm, tavily_search=None):
 
     builder.add_node('ask_question', generate_question)
     builder.add_node('search_web', search_web)
-    # builder.add_node('search_wikipedia', search_wikipedia)
     builder.add_node('generate_answer', generate_answer)
     builder.add_node('save_interview', save_interview)
     builder.add_node('write_section', write_section)
 
     builder.add_edge(START, 'ask_question')
     builder.add_edge('ask_question', 'search_web')
-    # builder.add_edge('ask_question', 'search_wikipedia')
     builder.add_edge('search_web', 'generate_answer')
     builder.add_edge('generate_answer', 'save_interview')
     builder.add_edge('save_interview', 'write_section')
     builder.add_edge('write_section', END)
 
     return builder.compile(checkpointer=memory)
-    # display(Image(interview_graph.get_graph().draw_mermaid_png()))
 
 
 class AutonomousReportGeneration:
@@ -232,15 +241,6 @@ class AutonomousReportGeneration:
 
         # Return to graph
         return {"final_report": final_report}
-
-    # def save_report(self, final_report: str, topic: str, format_: str = 'docx', save_dir: str = None):
-    #     pass
-    #
-    # def _save_as_docx(self, text: str, file_path: str):
-    #     pass
-    #
-    # def _save_as_pdf(self, text: str, file_path: str):
-    #     pass
 
     def save_report(self, final_report: str, topic: str, format_: str = "docx", save_dir: Optional[str] = None):
         """
@@ -360,7 +360,7 @@ if __name__ == '__main__':
 
     state = graph.get_state(thread)
 
-    feedback = input("\n Enter your feedback or press 'Enter' to continue as is: ").strip()
+    feedback = input("\nEnter your feedback or press 'Enter' to continue as is: ").strip()
 
     graph.update_state(thread, {'human_feedback': feedback}, as_node="human_feedback")
 
@@ -376,3 +376,6 @@ if __name__ == '__main__':
 
     else:
         print("no report content generated.")
+
+
+# Also add 1 clinician in analysts panel

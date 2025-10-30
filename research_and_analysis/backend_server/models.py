@@ -54,10 +54,12 @@ class GenerateAnalystsState(TypedDict):
 
 
 class InterviewState(MessagesState):
+    analyst: Analyst
     max_num_turns: int
     context: Annotated[list, operator.add]
     interview: str
     sections: list
+
 
 
 class ResearchGraphState(MessagesState):
