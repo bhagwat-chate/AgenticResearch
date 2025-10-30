@@ -13,7 +13,7 @@ from research_and_analysis.prompt_lib.prompts import *
 from docx import Document
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from research_and_analysis.backend_server.models import Analyst, Perspectives, GenerateAnalystsState, InterviewState, ResearchGraphState
+from research_and_analysis.backend_server.models import Analyst, Perspectives, GenerateAnalystsState, InterviewState, ResearchGraphState, SearchQuery
 from research_and_analysis.utils.model_loader import ModelLoader
 
 
@@ -22,19 +22,93 @@ def build_interview_graph(llm, tavily_search=None):
     memory = MemorySaver()
 
     def generate_question(state: InterviewState):
-        pass
+        """Node to generate the questions"""
+
+        # get state
+        analyst = state["analyst"]
+        messages = state["messages"]
+
+        # generate the question
+        system_message = ANALYST_ASK_QUESTIONS.format(goals=analyst.persona)
+        question = llm.invoke([SystemMessage(content=system_message)] + messages)
+
+        return {"messages": [question]}
 
     def search_web(state: InterviewState):
-        pass
+        """
+        Retrieve data from the web
+        """
+        structured_llm = llm.with_structured_output(SearchQuery)
+        search_query = structured_llm.invoke([GENERATE_SEARCH_QUERY] + state["messages"])
+
+        # Perform search
+        raw_results = tavily_search.invoke(search_query.search_query)
+
+        # If it's a dict (APIWrapper), extract the real docs
+        if isinstance(raw_results, dict) and "results" in raw_results:
+            search_docs = raw_results["results"]
+        else:
+            # fallback if Tavily tool returns a list or string
+            search_docs = raw_results
+
+        # Format nicely
+        formatted_search_docs = "\n\n---\n\n".join(
+            [
+                (
+                    f'<Document href="{doc.get("url", "unknown")}">\n{doc.get("content", "")}\n</Document>'
+                    if isinstance(doc, dict)
+                    else f'<Document>\n{doc}\n</Document>'
+                )
+                for doc in search_docs
+            ]
+        )
+
+        return {"context": [formatted_search_docs]}
 
     def generate_answer(state: InterviewState):
-        pass
+        # Get state
+        analyst = state["analyst"]
+        messages = state["messages"]
+        context = state["context"]
+
+        # Answer question
+        system_message = GENERATE_ANSWERS.format(goals=analyst.persona, context=context)
+        answer = llm.invoke([SystemMessage(content=system_message)] + messages)
+
+        # Name the message as coming from the expert
+        answer.name = "expert"
+
+        # Append it to state
+        return {"messages": [answer]}
 
     def save_interview(state: InterviewState):
-        pass
+
+        """ Save interviews """
+
+        # Get messages
+        messages = state["messages"]
+
+        # Convert interview to a string
+        interview = get_buffer_string(messages)
+
+        # Save to interviews key
+        return {"interview": interview}
 
     def write_section(state: InterviewState):
-        pass
+        """ Node to answer a question """
+
+        # Get state
+        interview = state["interview"]
+        context = state["context"]
+        analyst = state["analyst"]
+
+        # Write section using either the gathered source docs from interview (context) or the interview itself (interview)
+        system_message = WRITE_SECTION.format(focus=analyst.description)
+        section = llm.invoke([SystemMessage(content=system_message)] + [
+            HumanMessage(content=f"Use this source to write your section: {context}")])
+
+        # Append it to state
+        return {"sections": [section.content]}
 
     builder = StateGraph(InterviewState)
 
@@ -66,14 +140,14 @@ class AutonomousReportGeneration:
     def create_analyst(self, state: GenerateAnalystsState):
         structured_llm = self.llm.with_structured_output(Perspectives)
 
-        # 🧩 Render Jinja template into a plain string
+        # Render Jinja template into a plain string
         prompt_text = CREATE_ANALYSTS_PROMPT.render(
             topic=state.get("topic", ""),
             human_analyst_feedback=state.get("human_analyst_feedback", ""),
             max_analysts=state.get("max_analysts", 3)
         )
 
-        # ✅ Now pass the rendered string to SystemMessage
+        # Now pass the rendered string to SystemMessage
         analysts = structured_llm.invoke([
             SystemMessage(content=prompt_text),
             HumanMessage(content="Generate the set of analysts.")
@@ -91,12 +165,12 @@ class AutonomousReportGeneration:
         if not sections:
             sections = ['[No sections generated — kindly verify the interview stage.]']
 
-        # 🧩 Render your template
+        # Render your template
         prompt_text = REPORT_WRITER_INSTRUCTIONS.render(
             topic=topic
         )
 
-        # ✅ Send prompt properly
+        # Send prompt properly
         report = self.llm.invoke([
             SystemMessage(content=prompt_text),
             HumanMessage(content="\n\n".join(sections))
@@ -154,7 +228,7 @@ class AutonomousReportGeneration:
         if conclusion:
             final_report += f"{conclusion}\n\n"
 
-        print("\n✅ Final report assembled successfully.\n")
+        print("\nFinal report assembled successfully.\n")
 
         # Return to graph
         return {"final_report": final_report}
@@ -189,7 +263,7 @@ class AutonomousReportGeneration:
         else:
             raise ValueError(f"Unsupported format: {format_}")
 
-        print(f"📁 Saved {format_.upper()} report → {file_path}")
+        print(f"Saved {format_.upper()} report → {file_path}")
 
     # ----------------------------------------------------------------------
     def _save_as_docx(self, text: str, file_path: str):
