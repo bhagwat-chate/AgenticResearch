@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from typing import Optional
 from langgraph.types import Send
@@ -14,7 +15,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from research_and_analysis.backend_server.models import Perspectives, GenerateAnalystsState, InterviewState, ResearchGraphState, SearchQuery
 from research_and_analysis.utils.model_loader import ModelLoader
-
+from research_and_analysis.exception.custom_exception import ResearchAnalystException
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -38,7 +39,6 @@ def build_interview_graph(llm, tavily_search=None):
         ]
 
         # Invoke LLM directly with the messages
-        # question_response = state["llm"].invoke(messages)
         question_response = llm.invoke(messages)
 
         # Append the generated question into the dialogue
@@ -242,57 +242,121 @@ class AutonomousReportGeneration:
         # Return to graph
         return {"final_report": final_report}
 
-    def save_report(self, final_report: str, topic: str, format_: str = "docx", save_dir: Optional[str] = None):
-        """
-        Save the final report in DOCX or PDF format inside a timestamped folder.
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_topic = topic.replace(" ", "_").replace("/", "_")
+    def save_report(self, final_report: str, topic: str, format: str = "docx"):
+        """Save the report as DOCX or PDF, each in its own subfolder."""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_topic = re.sub(r'[\\/*?:"<>|]', "_", topic)
+            base_name = f"{safe_topic.replace(' ', '_')}_{timestamp}"
 
-        # Default save directory
-        if not save_dir:
-            save_dir = os.path.join(os.getcwd(), "reports", safe_topic)
-        os.makedirs(save_dir, exist_ok=True)
+            # Root folder (always inside project)
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+            root_dir = os.path.join(project_root, "generated_report")
 
-        file_path = os.path.join(save_dir, f"{safe_topic}_{timestamp}.{format_}")
+            # Create subfolder for this report
+            report_folder = os.path.join(root_dir, base_name)
+            os.makedirs(report_folder, exist_ok=True)
 
-        if format_ == "docx":
-            self._save_as_docx(final_report, file_path)
-        elif format_ == "pdf":
-            self._save_as_pdf(final_report, file_path)
-        else:
-            raise ValueError(f"Unsupported format: {format_}")
+            # Final file path inside that folder
+            file_path = os.path.join(report_folder, f"{base_name}.{format}")
 
-        print(f"Saved {format_.upper()} report → {file_path}")
+            if format == "docx":
+                self._save_as_docx(final_report, file_path)
+            elif format == "pdf":
+                self._save_as_pdf(final_report, file_path)
+            else:
+                raise ValueError("Invalid format. Use 'docx' or 'pdf'.")
 
-    # ----------------------------------------------------------------------
+            return file_path
+
+        except Exception as e:
+            raise ResearchAnalystException("Failed to save report file", e)
+
     def _save_as_docx(self, text: str, file_path: str):
-        """
-        Save report text (Markdown or plain) as a DOCX file using python-docx.
-        """
-        doc = Document()
-        doc.add_paragraph(text)
-        doc.save(file_path)
+        """Helper: save as DOCX."""
+        try:
+            doc = Document()
+            for line in text.split("\n"):
+                if line.startswith("# "):
+                    doc.add_heading(line[2:], level=1)
+                elif line.startswith("## "):
+                    doc.add_heading(line[3:], level=2)
+                elif line.startswith("### "):
+                    doc.add_heading(line[4:], level=3)
+                else:
+                    doc.add_paragraph(line)
+            doc.save(file_path)
+        except Exception as e:
+            raise ResearchAnalystException("Error saving DOCX report", e)
 
-    # ----------------------------------------------------------------------
     def _save_as_pdf(self, text: str, file_path: str):
-        """
-        Save report text as a simple paginated PDF using ReportLab.
-        """
-        c = canvas.Canvas(file_path, pagesize=letter)
-        width, height = letter
-        margin, y = 72, height - 72  # 1-inch margins
-        line_height = 14
+        """Helper: save as PDF with centered text block, wrapping, and clean layout."""
+        from textwrap import wrap
+        try:
+            c = canvas.Canvas(file_path, pagesize=letter)
+            width, height = letter
 
-        for line in text.split("\n"):
-            # Auto page-break
-            if y <= margin:
-                c.showPage()
-                y = height - margin
-            c.drawString(margin, y, line[:110])  # clip long lines
-            y -= line_height
+            # Margins and layout control
+            left_margin = 80
+            right_margin = 80
+            usable_width = width - left_margin - right_margin
+            top_margin = 70
+            bottom_margin = 60
+            y = height - top_margin
 
-        c.save()
+            # Fonts and styles
+            normal_font = "Helvetica"
+            bold_font = "Helvetica-Bold"
+            line_height = 15
+
+            # Title centered at top
+            lines = text.split("\n")
+            for raw_line in lines:
+                line = raw_line.strip()
+                if not line:
+                    y -= line_height
+                    continue
+
+                # Detect headings
+                if line.startswith("# "):
+                    font = bold_font
+                    size = 16
+                    line = line[2:].strip()
+                elif line.startswith("## "):
+                    font = bold_font
+                    size = 13
+                    line = line[3:].strip()
+                else:
+                    font = normal_font
+                    size = 11
+
+                # Wrap text for readable width
+                c.setFont(font, size)
+                wrapped_lines = wrap(line, width=int(usable_width / (size * 0.55)))
+
+                for wline in wrapped_lines:
+                    # Auto new page if near bottom
+                    if y < bottom_margin:
+                        c.showPage()
+                        c.setFont(font, size)
+                        y = height - top_margin
+
+                    # Compute centered X position
+                    text_width = c.stringWidth(wline, font, size)
+                    x = (width - text_width) / 2  # center horizontally
+
+                    c.drawString(x, y, wline)
+                    y -= line_height
+
+            # Optional footer with page number
+            for page_num in range(1, c.getPageNumber() + 1):
+                c.setFont("Helvetica", 9)
+                c.drawCentredString(width / 2, 25, f"Page {page_num}")
+
+            c.save()
+
+        except Exception as e:
+            raise ResearchAnalystException("Error saving PDF report", e)
 
     def build_graph(self):
 
@@ -322,6 +386,7 @@ class AutonomousReportGeneration:
                 )
                 for analyst in analysts
             ]
+
         # Add nodes and edges
         builder = StateGraph(ResearchGraphState)
         builder.add_node("create_analysts", self.create_analyst)
@@ -351,7 +416,7 @@ if __name__ == '__main__':
     reporter = AutonomousReportGeneration(llm)
     graph = reporter.build_graph()
 
-    topic = "Generative AI for Drug discovery."
+    topic = "Generative AI for Drug discovery"
 
     thread = {"configurable": {"thread_id": "1"}}
 
@@ -376,6 +441,3 @@ if __name__ == '__main__':
 
     else:
         print("no report content generated.")
-
-
-# Also add 1 clinician in analysts panel

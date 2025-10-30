@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from research_and_analysis.exception.custom_exception import ResearchAnalysisException
+from research_and_analysis.exception.custom_exception import ResearchAnalystException
 from research_and_analysis.logger import GLOBAL_LOGGER as log
 from research_and_analysis.utils.config_loader import load_config
 
